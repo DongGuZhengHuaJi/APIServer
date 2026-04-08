@@ -2,6 +2,8 @@
 #include <boost/beast.hpp>
 #include <iostream>
 #include <thread>
+#include <memory>
+#include <future>
 
 #include "api_server.h"
 #include "logic_system.h"

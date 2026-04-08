@@ -2,18 +2,17 @@
 #include "api_server.h"
 #include "thread_pool.hpp"
 
-#include <boost/asio.hpp>
-#include <iostream>
-#include <thread>
+#include <nlohmann/json.hpp>
+
 
 namespace http = boost::beast::http;
 using json = nlohmann::json;
 
 namespace {
-void send_text_response(std::shared_ptr<Session> session, http::status status, const std::string& body, const char* content_type) {
+void send_json_response(std::shared_ptr<Session> session, http::status status, const json& rsp_json, const char* content_type) {
     http::response<http::string_body> rsp{status, 11};
     rsp.set(http::field::content_type, content_type);
-    rsp.body() = body;
+    rsp.body() = rsp_json.dump();
     rsp.prepare_payload();
     session->send_response(rsp);
 }
@@ -66,7 +65,9 @@ void LogicSystem::handle_get_request(const http::request<http::string_body>& req
         get_handlers[target](session);
     } else {
         std::cerr << "Unknown GET target: " << target << std::endl;
-        send_text_response(session, http::status::not_found, "Unknown GET target: " + target, "text/plain");
+        json rsp_json;
+        rsp_json["error"] = "Unknown GET target: " + target;
+        send_json_response(session, http::status::not_found, rsp_json, "application/json");
     }
 }
 
@@ -78,34 +79,60 @@ void LogicSystem::handle_post_request(const http::request<http::string_body>& re
             post_handlers[action](root, session);
         } else {
             std::cerr << "Unknown POST action: " << action << std::endl;
-            send_text_response(session, http::status::bad_request, "Unknown POST action: " + action, "text/plain");
+            json rsp_json;
+            rsp_json["error"] = "Unknown POST action: " + action;
+            send_json_response(session, http::status::bad_request, rsp_json, "application/json");
         }
     } catch (const std::exception& e) {
         std::cerr << "Invalid POST body: " << e.what() << std::endl;
-        send_text_response(session, http::status::bad_request, "Invalid JSON body", "text/plain");
+        json rsp_json;
+        rsp_json["error"] = "Invalid JSON body";
+        send_json_response(session, http::status::bad_request, rsp_json, "application/json");
     }
 }
 
 void LogicSystem::register_get_handler() {
     get_handlers.emplace("example_get", [](std::shared_ptr<Session> session) {
         std::cout << "Handling example_get action" << std::endl;
-        send_text_response(session, http::status::ok, "example_get ok", "text/plain");
+        json rsp_json;
+        rsp_json["message"] = "example_get ok";
+        send_json_response(session, http::status::ok, rsp_json, "application/json");
     });
 }
 
 void LogicSystem::register_post_handler() {
     post_handlers.emplace("register_user", [](const json& data, std::shared_ptr<Session> session) {
         std::cout << "Handling register_user action" << std::endl;
-        json response = {
-            {"status", "success"},
-            {"message", "User registered successfully"}
-        };
-        http::response<http::string_body> rsp{http::status::ok, 11};
 
-        rsp.set(http::field::content_type, "application/json");
-        rsp.body() = response.dump();
-        rsp.prepare_payload();
-        session->send_response(rsp);
+        std::string id = data.value("id", "");
+        std::string pwd = data.value("pwd", "");
+        if (id.empty() || pwd.empty()) {
+            std::cerr << "Missing id or pwd in register_user action" << std::endl;
+            json rsp_json;
+            rsp_json["error"] = "Missing id or pwd";
+            send_json_response(session, http::status::bad_request, rsp_json, "application/json");
+            return;
+        }
+        else if(MysqlManager::checkUserExists(id)){
+            std::cerr << "User already exists: " << id << std::endl;
+            json rsp_json;
+            rsp_json["error"] = "User already exists";
+            send_json_response(session, http::status::bad_request, rsp_json, "application/json");
+            return;
+        }
+        
+        if(MysqlManager::addUser(id, pwd)){
+            std::cout << "User registered successfully: " << id << std::endl;
+            json rsp_json;
+            rsp_json["message"] = "User registered successfully";
+            send_json_response(session, http::status::ok, rsp_json, "application/json");
+        }
+        else{
+            std::cerr << "Failed to register user: " << id << std::endl;
+            json rsp_json;
+            rsp_json["error"] = "Failed to register user";
+            send_json_response(session, http::status::internal_server_error, rsp_json, "application/json");
+        }
     });
 }
 

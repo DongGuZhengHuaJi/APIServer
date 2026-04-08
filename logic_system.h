@@ -10,6 +10,13 @@
 #include <queue>
 #include <string>
 #include <unordered_map>
+#include <thread>
+#include <boost/asio.hpp>
+#include "redis_mgr.h"
+#include "mysql_mgr.h"
+#include <boost/uuid/uuid.hpp>
+#include <boost/uuid/uuid_generators.hpp>
+#include <boost/uuid/uuid_io.hpp>
 
 namespace beast = boost::beast;
 namespace http = boost::beast::http;
