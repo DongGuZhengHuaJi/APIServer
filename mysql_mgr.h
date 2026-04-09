@@ -1,5 +1,6 @@
 #include <string>
 #include <iostream>
+#include <cstdlib>
 #include <mysql_pool.h>
 
 class MysqlManager {
@@ -16,6 +17,40 @@ public:
             std::cerr << "Failed to initialize MySQL connection pool" << std::endl;
             return false;
         }
+        return true;
+    }
+
+    static bool initPoolFromEnv() {
+        const std::string host = env_or_default("MYSQL_HOST", "127.0.0.1");
+        const int port = env_int_or_default("MYSQL_PORT", 3306);
+        const std::string user = env_or_default("MYSQL_USER", "root");
+        const std::string password = env_or_default("MYSQL_PASSWORD", "");
+        const std::string db = env_or_default("MYSQL_DB", "meeting_db");
+        const int pool_size = env_int_or_default("MYSQL_POOL_SIZE", 10);
+
+        std::string endpoint = host;
+        if (host.rfind("tcp://", 0) != 0 && host.rfind("unix://", 0) != 0) {
+            endpoint = "tcp://" + host + ":" + std::to_string(port);
+        }
+
+        if (!initPool(endpoint, user, password, db, pool_size)) {
+            std::cerr << "MySQL env init failed."
+                      << " host=" << host
+                      << " port=" << port
+                      << " user=" << user
+                      << " db=" << db
+                      << " pool_size=" << pool_size
+                      << std::endl;
+            return false;
+        }
+
+        std::cout << "MySQL initialized from env."
+                  << " host=" << host
+                  << " port=" << port
+                  << " user=" << user
+                  << " db=" << db
+                  << " pool_size=" << pool_size
+                  << std::endl;
         return true;
     }
     
@@ -80,6 +115,27 @@ public:
         } catch (sql::SQLException& e) {
             std::cerr << "MySQL Query Error: " << e.what() << std::endl;
             return false;
+        }
+    }
+
+private:
+    static std::string env_or_default(const char* key, const std::string& default_value) {
+        const char* value = std::getenv(key);
+        if (value == nullptr || value[0] == '\0') {
+            return default_value;
+        }
+        return value;
+    }
+
+    static int env_int_or_default(const char* key, int default_value) {
+        const char* value = std::getenv(key);
+        if (value == nullptr || value[0] == '\0') {
+            return default_value;
+        }
+        try {
+            return std::stoi(value);
+        } catch (...) {
+            return default_value;
         }
     }
 };

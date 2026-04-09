@@ -340,6 +340,9 @@ void LogicSystem::stop() {
 }
 
 LogicSystem::LogicSystem() {
+    if (!MysqlManager::initPoolFromEnv()) {
+        std::cerr << "Failed to initialize MySQL pool in LogicSystem constructor" << std::endl;
+    }
     register_get_handler();
     register_post_handler();
     for (int i = 0; i < std::thread::hardware_concurrency(); ++i) {

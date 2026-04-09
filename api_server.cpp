@@ -4,6 +4,7 @@
 #include <thread>
 #include <memory>
 #include <future>
+#include <vector>
 
 #include "api_server.h"
 #include "logic_system.h"
@@ -80,8 +81,13 @@ int main() {
         std::promise<void> exit_signal;
         std::future<void> exit_future = exit_signal.get_future();
         server->start();
-        for (int i = 0; i < std::thread::hardware_concurrency(); ++i) {
-            ThreadPool::getInstance().commit([&ioc]() { ioc.run(); });
+
+        // Do not run ioc on ThreadPool, otherwise LogicSystem tasks can starve.
+        const unsigned int io_threads_count = std::max(1u, std::thread::hardware_concurrency());
+        std::vector<std::thread> io_threads;
+        io_threads.reserve(io_threads_count);
+        for (unsigned int i = 0; i < io_threads_count; ++i) {
+            io_threads.emplace_back([&ioc]() { ioc.run(); });
         }
 
         net::signal_set signals(net::make_strand(ioc), SIGINT, SIGTERM);
@@ -99,6 +105,13 @@ int main() {
         std::cout << "Press Ctrl+C to stop the server." << std::endl;
 
         exit_future.wait(); // 等待退出信号
+
+        ioc.stop();
+        for (auto& t : io_threads) {
+            if (t.joinable()) {
+                t.join();
+            }
+        }
 
     } catch (const std::exception& e) {
         std::cerr << "Error: " << e.what() << std::endl;
