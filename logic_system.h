@@ -40,6 +40,9 @@ public:
     void handle_post_request(const http::request<http::string_body>& req, std::shared_ptr<Session> session);
     void register_get_handler();
     void register_post_handler();
+    bool checkAccessToken(const std::string& id, const std::string& access_token);
+    bool checkRefreshToken(const std::string& id, const std::string& refresh_token);
+    std::string generateToken();
     void stop();
 
 private:

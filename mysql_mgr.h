@@ -59,4 +59,27 @@ public:
             return false;
         }
     }
+
+    static bool checkPwd(const std::string& id, const std::string& pwd){
+        //检查用户密码是否正确
+        MysqlPool& pool = MysqlPool::getInstance();
+        auto conn = pool.getConnection();
+        if (!conn) {
+            std::cerr << "Failed to get MySQL connection" << std::endl;
+            return false;
+        }
+
+        try {
+            std::unique_ptr<sql::PreparedStatement> stmt(conn->prepareStatement("SELECT pwd FROM users WHERE id = ?"));
+            stmt->setString(1, id);
+            std::unique_ptr<sql::ResultSet> res(stmt->executeQuery());
+            if (res->next()) {
+                return res->getString("pwd") == pwd;
+            }
+            return false;
+        } catch (sql::SQLException& e) {
+            std::cerr << "MySQL Query Error: " << e.what() << std::endl;
+            return false;
+        }
+    }
 };

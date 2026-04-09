@@ -1,7 +1,11 @@
+#pragma once
+
 #include <hiredis/hiredis.h>
 #include <sw/redis++/redis++.h>
+#include <cstdlib>
 #include <iostream>
 #include <string>
+#include <thread>
 
 class RedisManager {
 public:
@@ -75,7 +79,10 @@ private:
         sw::redis::ConnectionOptions opts;
         opts.host = "127.0.0.1";
         opts.port = 6379;
-        opts.password = "123456";
+        const char* redis_password = std::getenv("REDIS_PASSWORD");
+        if (redis_password != nullptr && redis_password[0] != '\0') {
+            opts.password = redis_password;
+        }
         opts.db = 0;
         return opts;
     }
