@@ -1,5 +1,4 @@
 #pragma once
-
 #include <boost/beast.hpp>
 #include <atomic>
 #include <condition_variable>
@@ -18,7 +17,6 @@
 #include <boost/uuid/uuid_generators.hpp>
 #include <boost/uuid/uuid_io.hpp>
 
-namespace beast = boost::beast;
 namespace http = boost::beast::http;
 
 class Session;

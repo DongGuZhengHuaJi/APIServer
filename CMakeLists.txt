@@ -47,8 +47,9 @@
 cmake_minimum_required(VERSION 3.10)
 project(APIServer)
 
-set(CMAKE_CXX_STANDARD 20)
+set(CMAKE_CXX_STANDARD 23)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
+set(CMAKE_EXPORT_COMPILE_COMMANDS ON)
 
 # ==========================================
 # 1. 直接指定头文件搜索路径 (编译器找 .h)

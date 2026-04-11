@@ -3,6 +3,11 @@
 #include "thread_pool.hpp"
 #include "redis_mgr.h"
 #include <nlohmann/json.hpp>
+#include <ctime>
+#include <iomanip>
+#include <limits>
+#include <sstream>
+#include <string>
 
 
 namespace http = boost::beast::http;
@@ -11,6 +16,7 @@ using json = nlohmann::json;
 namespace {
 constexpr int kAccessTokenExpireSeconds = 15 * 60;
 constexpr int kRefreshTokenExpireSeconds = 7 * 24 * 60 * 60;
+constexpr const char* kReservationEventChannel = "meeting:reservation_events";
 
 std::string access_token_key(const std::string& token) {
     return "access:" + token;
@@ -18,6 +24,97 @@ std::string access_token_key(const std::string& token) {
 
 std::string refresh_token_key(const std::string& token) {
     return "refresh:" + token;
+}
+
+bool parse_unix_seconds(const std::string& value, std::chrono::system_clock::time_point& out) {
+    try {
+        size_t idx = 0;
+        const long long sec = std::stoll(value, &idx);
+        if (idx != value.size()) {
+            return false;
+        }
+
+        if (sec < static_cast<long long>(std::numeric_limits<std::time_t>::min()) ||
+            sec > static_cast<long long>(std::numeric_limits<std::time_t>::max())) {
+            return false;
+        }
+
+        const std::time_t tt = static_cast<std::time_t>(sec);
+        out = std::chrono::system_clock::from_time_t(tt);
+        return true;
+    } catch (...) {
+        return false;
+    }
+}
+
+bool parse_datetime_local(const std::string& value, std::chrono::system_clock::time_point& out) {
+    std::tm tm_buf{};
+    {
+        std::istringstream iss(value);
+        iss >> std::get_time(&tm_buf, "%Y-%m-%d %H:%M:%S");
+        if (!iss.fail()) {
+            const std::time_t tt = std::mktime(&tm_buf);
+            if (tt == static_cast<std::time_t>(-1)) {
+                return false;
+            }
+            out = std::chrono::system_clock::from_time_t(tt);
+            return true;
+        }
+    }
+
+    tm_buf = {};
+    std::istringstream iss(value);
+    iss >> std::get_time(&tm_buf, "%Y-%m-%d %H:%M");
+    if (iss.fail()) {
+        return false;
+    }
+
+    const std::time_t tt = std::mktime(&tm_buf);
+    if (tt == static_cast<std::time_t>(-1)) {
+        return false;
+    }
+    out = std::chrono::system_clock::from_time_t(tt);
+    return true;
+}
+
+bool parse_time_value(std::string value, std::chrono::system_clock::time_point& out) {
+    try {
+        size_t idx = 0;
+        long long raw = std::stoll(value, &idx);
+        if (idx == value.size()) {
+            if (raw >= 1000000000000LL || raw <= -1000000000000LL) {
+                raw /= 1000;
+            }
+
+            if (raw >= static_cast<long long>(std::numeric_limits<std::time_t>::min()) &&
+                raw <= static_cast<long long>(std::numeric_limits<std::time_t>::max())) {
+                const std::time_t tt = static_cast<std::time_t>(raw);
+                out = std::chrono::system_clock::from_time_t(tt);
+                return true;
+            }
+        }
+    } catch (...) {
+        // Fall through to datetime string parsing.
+    }
+
+    if (parse_unix_seconds(value, out)) {
+        return true;
+    }
+
+    if (!value.empty() && value.back() == 'Z') {
+        value.pop_back();
+    }
+    for (char& c : value) {
+        if (c == 'T') {
+            c = ' ';
+        }
+    }
+    const size_t dot_pos = value.find('.');
+    if (dot_pos != std::string::npos) {
+        value = value.substr(0, dot_pos);
+    }
+
+    return parse_datetime_local(value, out);
 }
 
 void send_json_response(std::shared_ptr<Session> session, http::status status, const json& rsp_json, const char* content_type) {
@@ -72,8 +169,9 @@ void LogicSystem::processTasks() {
 
 void LogicSystem::handle_get_request(const http::request<http::string_body>& req, std::shared_ptr<Session> session) {
     std::string target = std::string(req.target());
-    if (get_handlers.contains(target)) {
-        get_handlers[target](session);
+    auto get_it = get_handlers.find(target);
+    if (get_it != get_handlers.end()) {
+        get_it->second(session);
     } else {
         std::cerr << "Unknown GET target: " << target << std::endl;
         json rsp_json;
@@ -84,8 +182,10 @@ void LogicSystem::handle_get_request(const http::request<http::string_body>& req
 
 void LogicSystem::handle_post_request(const http::request<http::string_body>& req, std::shared_ptr<Session> session) {
     try {
+        std::cout << "POST body bytes: " << req.body().size() << std::endl;
         json root = json::parse(req.body());
         std::string action = root.value("action", "");
+        std::cout << "POST action: " << action << std::endl;
         std::string requester_id = root.value("from", root.value("id", ""));
         if(action.empty()) {
             std::cerr << "Missing action in POST request" << std::endl;
@@ -111,8 +211,9 @@ void LogicSystem::handle_post_request(const http::request<http::string_body>& re
                 return;
             }
         }
-        if (post_handlers.contains(action)) {
-            post_handlers[action](root, session);
+        auto post_it = post_handlers.find(action);
+        if (post_it != post_handlers.end()) {
+            post_it->second(root, session);
         } else {
             std::cerr << "Unknown POST action: " << action << std::endl;
             json rsp_json;
@@ -121,6 +222,7 @@ void LogicSystem::handle_post_request(const http::request<http::string_body>& re
         }
     } catch (const std::exception& e) {
         std::cerr << "Invalid POST body: " << e.what() << std::endl;
+        std::cerr << "Raw POST body: " << req.body() << std::endl;
         json rsp_json;
         rsp_json["error"] = "Invalid JSON body";
         send_json_response(session, http::status::bad_request, rsp_json, "application/json");
@@ -221,6 +323,103 @@ void LogicSystem::register_post_handler() {
             send_json_response(session, http::status::unauthorized, rsp_json, "application/json");
         }
     });
+    post_handlers.emplace("reserve", [](const json& data, std::shared_ptr<Session> session) {
+        std::cout << "Handling reserve action" << std::endl;
+
+        std::string id = data.value("from", data.value("id", ""));
+        std::string time = data.value("time", "");
+        std::string room = data.value("room", "");
+        if (id.empty()) {
+            std::cerr << "Missing from/id in reserve action" << std::endl;
+            json rsp_json;
+            rsp_json["error"] = "Missing from (or id)";
+            send_json_response(session, http::status::bad_request, rsp_json, "application/json");
+            return;
+        }
+        else if (time.empty()) {
+            std::cerr << "Missing time in reserve action" << std::endl;
+            json rsp_json;
+            rsp_json["error"] = "Missing time";
+            send_json_response(session, http::status::bad_request, rsp_json, "application/json");
+            return;
+        }
+        else if (room.empty()) {
+            std::cerr << "Missing room in reserve action" << std::endl;
+            json rsp_json;
+            rsp_json["error"] = "Missing room";
+            send_json_response(session, http::status::bad_request, rsp_json, "application/json");
+            return;
+        }
+        
+        std::chrono::system_clock::time_point reserve_time;
+        if (!parse_time_value(time, reserve_time)) {
+            std::cerr << "Invalid time format in reserve action" << std::endl;
+            json rsp_json;
+            rsp_json["error"] = "Invalid time, expected unix seconds/ms or YYYY-MM-DD HH:MM[:SS]";
+            send_json_response(session, http::status::bad_request, rsp_json, "application/json");
+            return;
+        }
+
+        ReserveMeetingInfo info(id, reserve_time, room);
+        bool mysql_written = false;
+        bool redis_written = false;
+        std::string reserve_key;
+        
+        try {
+            if (!MysqlManager::addReservation(info)) {
+                json rsp_json;
+                rsp_json["error"] = "Failed to add reservation";
+                send_json_response(session, http::status::internal_server_error, rsp_json, "application/json");
+                return;
+            }
+            mysql_written = true;
+
+            const long long reserve_epoch = std::chrono::duration_cast<std::chrono::seconds>(
+                reserve_time.time_since_epoch()).count();
+
+            json reserve_event = {
+                {"type", "reservation_created"},
+                {"user_id", id},
+                {"room", room},
+                {"time", reserve_epoch}
+            };
+
+            RedisManager& redis_mgr = RedisManager::getInstance();
+            reserve_key = "reservation:" + id + ":" + room + ":" + std::to_string(reserve_epoch);
+            redis_written = redis_mgr.set(reserve_key, reserve_event.dump());
+            if (!redis_written) {
+                throw std::runtime_error("Failed to save reservation event to Redis");
+            }
+
+            // publish 返回订阅者数量。<=0 代表当前没有消费者，会导致预约事件丢失。
+            const long long subscriber_count = redis_mgr.getClient().publish(kReservationEventChannel, reserve_event.dump());
+            if (subscriber_count <= 0) {
+                throw std::runtime_error("No signaling subscriber for reservation event");
+            }
+        } catch (const std::exception& e) {
+            std::cerr << "Error adding reservation: " << e.what() << std::endl;
+
+            if (redis_written && !reserve_key.empty()) {
+                RedisManager::getInstance().del(reserve_key);
+            }
+            if (mysql_written) {
+                const bool rollback_ok = MysqlManager::removeReservation(info);
+                if (!rollback_ok) {
+                    std::cerr << "Reservation rollback failed, manual cleanup may be required" << std::endl;
+                }
+            }
+
+            json rsp_json;
+            rsp_json["error"] = "Failed to add reservation";
+            rsp_json["detail"] = e.what();
+            send_json_response(session, http::status::internal_server_error, rsp_json, "application/json");
+            return;
+        }
+
+        json rsp_json;
+        rsp_json["status"] = "ok";
+        send_json_response(session, http::status::ok, rsp_json, "application/json");
+    });
 
     post_handlers.emplace("refresh_token", [](const json& data, std::shared_ptr<Session> session) {
         std::string refresh_token = data.value("refresh_token", "");
@@ -261,7 +460,7 @@ void LogicSystem::register_post_handler() {
         RedisManager::getInstance().del(refresh_token_key(refresh_token));
 
         json rsp_json;
-        rsp_json["message"] = "Token refreshed successfully";
+        rsp_json["status"] = "ok";
         rsp_json["token"] = new_access_token;
         rsp_json["access_token"] = new_access_token;
         rsp_json["access_expires_in"] = kAccessTokenExpireSeconds;
@@ -306,7 +505,7 @@ void LogicSystem::register_post_handler() {
         RedisManager::getInstance().del(refresh_token_key(refresh_token));
 
         json rsp_json;
-        rsp_json["message"] = "Logged out successfully";
+        rsp_json["status"] = "ok";
         send_json_response(session, http::status::ok, rsp_json, "application/json");
     });
 }

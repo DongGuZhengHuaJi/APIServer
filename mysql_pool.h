@@ -32,6 +32,15 @@ public:
                         "pwd VARCHAR(255), "
                         "created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP)");
 
+            stmt->execute("CREATE TABLE IF NOT EXISTS reservations ("
+                        "id BIGINT PRIMARY KEY AUTO_INCREMENT, "
+                        "user_id VARCHAR(255) NOT NULL, "
+                        "time DATETIME NOT NULL, "
+                        "room VARCHAR(255) NOT NULL, "
+                        "created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP, "
+                        "INDEX idx_reservations_user_id (user_id), "
+                        "FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE)");
+
             std::lock_guard<std::mutex> lock(_mutex);
             for (int i = 0; i < size; ++i) {
                 sql::Connection* conn = sql::mysql::get_mysql_driver_instance()->connect(host, user, pwd);

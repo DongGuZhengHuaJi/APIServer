@@ -1,7 +1,20 @@
+#include <chrono>
+#include <ctime>
+#include <iomanip>
+#include <sstream>
 #include <string>
 #include <iostream>
 #include <cstdlib>
-#include <mysql_pool.h>
+#include "mysql_pool.h"
+
+struct ReserveMeetingInfo {
+    std::string from;
+    std::chrono::system_clock::time_point time;
+    std::string room;
+
+    ReserveMeetingInfo(const std::string& f, const std::chrono::system_clock::time_point& t, const std::string& r)
+        : from(f), time(t), room(r) {}
+};
 
 class MysqlManager {
 public:
@@ -118,7 +131,60 @@ public:
         }
     }
 
+    static bool addReservation(const ReserveMeetingInfo& info) {
+        MysqlPool& pool = MysqlPool::getInstance();
+        auto conn = pool.getConnection();
+        if (!conn) {
+            std::cerr << "Failed to get MySQL connection" << std::endl;
+            return false;
+        }
+
+        try {
+            std::unique_ptr<sql::PreparedStatement> stmt(conn->prepareStatement("INSERT INTO reservations (user_id, time, room) VALUES (?, ?, ?)"));
+            stmt->setString(1, info.from);
+            stmt->setString(2, to_mysql_datetime(info.time));
+            stmt->setString(3, info.room);
+            stmt->execute();
+            return true;
+        } catch (sql::SQLException& e) {
+            std::cerr << "MySQL Insert Error: " << e.what() << std::endl;
+            return false;
+        }
+    }
+
+    static bool removeReservation(const ReserveMeetingInfo& info) {
+        MysqlPool& pool = MysqlPool::getInstance();
+        auto conn = pool.getConnection();
+        if (!conn) {
+            std::cerr << "Failed to get MySQL connection" << std::endl;
+            return false;
+        }
+
+        try {
+            std::unique_ptr<sql::PreparedStatement> stmt(conn->prepareStatement(
+                "DELETE FROM reservations WHERE user_id = ? AND time = ? AND room = ?"));
+            stmt->setString(1, info.from);
+            stmt->setString(2, to_mysql_datetime(info.time));
+            stmt->setString(3, info.room);
+            stmt->execute();
+            return true;
+        } catch (sql::SQLException& e) {
+            std::cerr << "MySQL Delete Error: " << e.what() << std::endl;
+            return false;
+        }
+    }
+
 private:
+    static std::string to_mysql_datetime(const std::chrono::system_clock::time_point& tp) {
+        const std::time_t tt = std::chrono::system_clock::to_time_t(tp);
+        std::tm tm_buf {};
+        localtime_r(&tt, &tm_buf);
+
+        std::ostringstream oss;
+        oss << std::put_time(&tm_buf, "%Y-%m-%d %H:%M:%S");
+        return oss.str();
+    }
+
     static std::string env_or_default(const char* key, const std::string& default_value) {
         const char* value = std::getenv(key);
         if (value == nullptr || value[0] == '\0') {
