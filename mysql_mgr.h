@@ -6,6 +6,8 @@
 #include <iostream>
 #include <cstdlib>
 #include "mysql_pool.h"
+#include <nlohmann/json.hpp>
+using json = nlohmann::json;
 
 struct ReserveMeetingInfo {
     std::string from;
@@ -140,14 +142,42 @@ public:
         }
 
         try {
-            std::unique_ptr<sql::PreparedStatement> stmt(conn->prepareStatement("INSERT INTO reservations (user_id, time, room) VALUES (?, ?, ?)"));
+            std::unique_ptr<sql::PreparedStatement> stmt(conn->prepareStatement(
+                "INSERT INTO reservations (user_id, time, room, meeting_type, status) VALUES (?, ?, ?, ?, ?)"));
             stmt->setString(1, info.from);
             stmt->setString(2, to_mysql_datetime(info.time));
             stmt->setString(3, info.room);
+            stmt->setString(4, "reserved");
+            stmt->setString(5, "scheduled");
             stmt->execute();
             return true;
         } catch (sql::SQLException& e) {
             std::cerr << "MySQL Insert Error: " << e.what() << std::endl;
+            return false;
+        }
+    }
+
+    static bool addQuickMeeting(const std::string& user_id, const std::string& room,
+                                const std::chrono::system_clock::time_point& start_time) {
+        MysqlPool& pool = MysqlPool::getInstance();
+        auto conn = pool.getConnection();
+        if (!conn) {
+            std::cerr << "Failed to get MySQL connection" << std::endl;
+            return false;
+        }
+
+        try {
+            std::unique_ptr<sql::PreparedStatement> stmt(conn->prepareStatement(
+                "INSERT INTO reservations (user_id, time, room, meeting_type, status) VALUES (?, ?, ?, ?, ?)"));
+            stmt->setString(1, user_id);
+            stmt->setString(2, to_mysql_datetime(start_time));
+            stmt->setString(3, room);
+            stmt->setString(4, "quick");
+            stmt->setString(5, "started");
+            stmt->execute();
+            return true;
+        } catch (sql::SQLException& e) {
+            std::cerr << "MySQL Insert QuickMeeting Error: " << e.what() << std::endl;
             return false;
         }
     }
@@ -170,6 +200,72 @@ public:
             return true;
         } catch (sql::SQLException& e) {
             std::cerr << "MySQL Delete Error: " << e.what() << std::endl;
+            return false;
+        }
+    }
+
+    static bool closeReservationByRoom(const std::string& room, const std::string& reason,
+                                       const std::chrono::system_clock::time_point& closed_time) {
+        MysqlPool& pool = MysqlPool::getInstance();
+        auto conn = pool.getConnection();
+        if (!conn) {
+            std::cerr << "Failed to get MySQL connection" << std::endl;
+            return false;
+        }
+
+        try {
+            std::unique_ptr<sql::PreparedStatement> stmt(conn->prepareStatement(
+                "UPDATE reservations "
+                "SET status = 'closed', ended_at = ?, end_reason = ? "
+                "WHERE room = ? AND status != 'closed'"));
+            stmt->setString(1, to_mysql_datetime(closed_time));
+            stmt->setString(2, reason);
+            stmt->setString(3, room);
+            stmt->execute();
+            return true;
+        } catch (sql::SQLException& e) {
+            std::cerr << "MySQL Update Error: " << e.what() << std::endl;
+            return false;
+        }
+    }
+
+    static bool getUserReservations(const std::string& user_id, json &reservations) {
+        MysqlPool& pool = MysqlPool::getInstance();
+        auto conn = pool.getConnection();
+        if (!conn) {
+            std::cerr << "Failed to get MySQL connection" << std::endl;
+            return false;
+        }
+
+        try {
+            std::unique_ptr<sql::PreparedStatement> stmt(conn->prepareStatement(
+                "SELECT time, room, meeting_type, status, ended_at, end_reason "
+                "FROM reservations WHERE user_id = ? ORDER BY time DESC"));
+            stmt->setString(1, user_id);
+            std::unique_ptr<sql::ResultSet> res(stmt->executeQuery());
+
+            reservations = json::array();
+
+            while (res->next()) {
+                const std::string time_str = res->getString("time");
+                const std::string room = res->getString("room");
+                const std::string meeting_type = res->getString("meeting_type");
+                const std::string status = res->getString("status");
+                const std::string ended_at = res->isNull("ended_at") ? "" : res->getString("ended_at");
+                const std::string end_reason = res->isNull("end_reason") ? "" : res->getString("end_reason");
+
+                reservations.push_back({
+                    {"time", time_str},
+                    {"room", room},
+                    {"meeting_type", meeting_type},
+                    {"status", status},
+                    {"ended_at", ended_at},
+                    {"end_reason", end_reason}
+                });
+            }
+            return true;
+        } catch (sql::SQLException& e) {
+            std::cerr << "MySQL Query Error: " << e.what() << std::endl;
             return false;
         }
     }

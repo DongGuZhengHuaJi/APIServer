@@ -17,6 +17,7 @@ namespace {
 constexpr int kAccessTokenExpireSeconds = 15 * 60;
 constexpr int kRefreshTokenExpireSeconds = 7 * 24 * 60 * 60;
 constexpr const char* kReservationEventChannel = "meeting:reservation_events";
+constexpr const char* kRoomClosedEventChannel = "meeting:room_closed_events";
 
 std::string access_token_key(const std::string& token) {
     return "access:" + token;
@@ -123,6 +124,28 @@ void send_json_response(std::shared_ptr<Session> session, http::status status, c
     rsp.body() = rsp_json.dump();
     rsp.prepare_payload();
     session->send_response(rsp);
+}
+
+void delete_reservation_keys_by_room(RedisManager& redis_mgr, const std::string& room_id) {
+    const std::string pattern = "reservation:*:" + room_id + ":*";
+    long long cursor = 0;
+    do {
+        std::vector<std::string> keys;
+        try {
+            cursor = redis_mgr.getClient().scan(cursor, pattern, 200, std::back_inserter(keys));
+        } catch (const std::exception& e) {
+            std::cerr << "Redis scan failed for pattern " << pattern << ": " << e.what() << std::endl;
+            return;
+        }
+
+        for (const auto& key : keys) {
+            redis_mgr.del(key);
+        }
+    } while (cursor != 0);
+
+    if (cursor == 0) {
+        std::cout << "Reservation cache keys cleaned for room " << room_id << std::endl;
+    }
 }
 }  // namespace
 
@@ -323,6 +346,28 @@ void LogicSystem::register_post_handler() {
             send_json_response(session, http::status::unauthorized, rsp_json, "application/json");
         }
     });
+    post_handlers.emplace("get_user_reservations", [](const json& data, std::shared_ptr<Session> session) {
+        std::string user_id = data.value("from", data.value("id", ""));
+        if (user_id.empty()) {
+            send_json_response(session, http::status::bad_request, 
+                json{{"error", "Missing user id"}}, "application/json");
+            return;
+        }
+        
+        json reservations;
+        if(MysqlManager::getUserReservations(user_id, reservations)){
+            std::cout << "Fetched reservations for user " << user_id << ": " << reservations.dump() << std::endl;
+            json rsp_json;
+            rsp_json["reservations"] = reservations;
+            send_json_response(session, http::status::ok, rsp_json, "application/json");
+        }
+        else{
+            std::cerr << "Failed to fetch reservations for user: " << user_id << std::endl;
+            json rsp_json;
+            rsp_json["error"] = "Failed to fetch reservations";
+            send_json_response(session, http::status::internal_server_error, rsp_json, "application/json");
+        }
+    });
     post_handlers.emplace("reserve", [](const json& data, std::shared_ptr<Session> session) {
         std::cout << "Handling reserve action" << std::endl;
 
@@ -379,6 +424,7 @@ void LogicSystem::register_post_handler() {
 
             json reserve_event = {
                 {"type", "reservation_created"},
+                {"meeting_type", "reserved"},
                 {"user_id", id},
                 {"room", room},
                 {"time", reserve_epoch}
@@ -412,6 +458,29 @@ void LogicSystem::register_post_handler() {
             json rsp_json;
             rsp_json["error"] = "Failed to add reservation";
             rsp_json["detail"] = e.what();
+            send_json_response(session, http::status::internal_server_error, rsp_json, "application/json");
+            return;
+        }
+
+        json rsp_json;
+        rsp_json["status"] = "ok";
+        send_json_response(session, http::status::ok, rsp_json, "application/json");
+    });
+
+    post_handlers.emplace("quick_meeting_start", [](const json& data, std::shared_ptr<Session> session) {
+        std::string id = data.value("from", data.value("id", ""));
+        std::string room = data.value("room", "");
+        if (id.empty() || room.empty()) {
+            json rsp_json;
+            rsp_json["error"] = "Missing from/id or room";
+            send_json_response(session, http::status::bad_request, rsp_json, "application/json");
+            return;
+        }
+
+        const auto now = std::chrono::system_clock::now();
+        if (!MysqlManager::addQuickMeeting(id, room, now)) {
+            json rsp_json;
+            rsp_json["error"] = "Failed to persist quick meeting";
             send_json_response(session, http::status::internal_server_error, rsp_json, "application/json");
             return;
         }
@@ -538,12 +607,64 @@ void LogicSystem::stop() {
     _cond.notify_all();
 }
 
+void LogicSystem::startRoomClosedSubscription() {
+    bool expected = false;
+    if (!_room_event_sub_started.compare_exchange_strong(expected, true)) {
+        return;
+    }
+
+    std::thread([]() {
+        try {
+            auto subscriber = RedisManager::getInstance().getClient().subscriber();
+            subscriber.on_message([](std::string channel, std::string msg) {
+                if (channel != kRoomClosedEventChannel) {
+                    return;
+                }
+
+                try {
+                    const auto payload = nlohmann::json::parse(msg);
+                    const std::string room_id = payload.value("room_id", "");
+                    if (room_id.empty()) {
+                        std::cerr << "Room close event missing room_id" << std::endl;
+                        return;
+                    }
+
+                    const std::string reason = payload.value("reason", "empty_timeout");
+                    const std::string meeting_type = payload.value("meeting_type", "reserved");
+                    const auto closed_time = std::chrono::system_clock::now();
+
+                    if (!MysqlManager::closeReservationByRoom(room_id, reason, closed_time)) {
+                        std::cerr << "Failed to close reservation records for room " << room_id
+                                  << " type=" << meeting_type << std::endl;
+                    }
+
+                    RedisManager& redis_mgr = RedisManager::getInstance();
+                    delete_reservation_keys_by_room(redis_mgr, room_id);
+                    redis_mgr.set("room_status:" + room_id, "closed", 24 * 60 * 60);
+
+                    std::cout << "Handled room closed event for room " << room_id << std::endl;
+                } catch (const std::exception& e) {
+                    std::cerr << "Room close event parse/handle error: " << e.what() << std::endl;
+                }
+            });
+
+            subscriber.subscribe(kRoomClosedEventChannel);
+            while (true) {
+                subscriber.consume();
+            }
+        } catch (const std::exception& e) {
+            std::cerr << "Room closed subscription stopped: " << e.what() << std::endl;
+        }
+    }).detach();
+}
+
 LogicSystem::LogicSystem() {
     if (!MysqlManager::initPoolFromEnv()) {
         std::cerr << "Failed to initialize MySQL pool in LogicSystem constructor" << std::endl;
     }
     register_get_handler();
     register_post_handler();
+    startRoomClosedSubscription();
     for (int i = 0; i < std::thread::hardware_concurrency(); ++i) {
         ThreadPool::getInstance().commit([this]() { processTasks(); });
     }

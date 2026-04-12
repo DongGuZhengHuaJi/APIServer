@@ -42,6 +42,7 @@ public:
     bool checkRefreshToken(const std::string& id, const std::string& refresh_token);
     std::string generateToken();
     void stop();
+    void startRoomClosedSubscription();
 
 private:
     LogicSystem();
@@ -58,4 +59,5 @@ private:
     std::queue<LogicSystem_Task> _message_queue;
     std::mutex _queue_mutex;
     std::condition_variable _cond;
+    std::atomic<bool> _room_event_sub_started{false};
 };

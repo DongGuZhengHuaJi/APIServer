@@ -37,9 +37,26 @@ public:
                         "user_id VARCHAR(255) NOT NULL, "
                         "time DATETIME NOT NULL, "
                         "room VARCHAR(255) NOT NULL, "
+                        "meeting_type VARCHAR(32) NOT NULL DEFAULT 'reserved', "
+                        "status VARCHAR(32) NOT NULL DEFAULT 'scheduled', "
+                        "ended_at DATETIME NULL, "
+                        "end_reason VARCHAR(64) NULL, "
                         "created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP, "
                         "INDEX idx_reservations_user_id (user_id), "
+                        "INDEX idx_reservations_room (room), "
                         "FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE)");
+
+                    // Backward-compatible schema migration for older deployments.
+                    ensure_column_exists(tmp_conn.get(), db_name, "reservations", "meeting_type",
+                             "ALTER TABLE reservations ADD COLUMN meeting_type VARCHAR(32) NOT NULL DEFAULT 'reserved'");
+                    ensure_column_exists(tmp_conn.get(), db_name, "reservations", "status",
+                             "ALTER TABLE reservations ADD COLUMN status VARCHAR(32) NOT NULL DEFAULT 'scheduled'");
+                    ensure_column_exists(tmp_conn.get(), db_name, "reservations", "ended_at",
+                             "ALTER TABLE reservations ADD COLUMN ended_at DATETIME NULL");
+                    ensure_column_exists(tmp_conn.get(), db_name, "reservations", "end_reason",
+                             "ALTER TABLE reservations ADD COLUMN end_reason VARCHAR(64) NULL");
+                    ensure_index_exists(tmp_conn.get(), db_name, "reservations", "idx_reservations_room",
+                            "ALTER TABLE reservations ADD INDEX idx_reservations_room (room)");
 
             std::lock_guard<std::mutex> lock(_mutex);
             for (int i = 0; i < size; ++i) {
@@ -73,6 +90,50 @@ public:
 
     
 private:
+    static bool column_exists(sql::Connection* conn, const std::string& db_name,
+                              const std::string& table, const std::string& column) {
+        std::unique_ptr<sql::PreparedStatement> stmt(conn->prepareStatement(
+            "SELECT 1 FROM information_schema.COLUMNS "
+            "WHERE TABLE_SCHEMA = ? AND TABLE_NAME = ? AND COLUMN_NAME = ? LIMIT 1"));
+        stmt->setString(1, db_name);
+        stmt->setString(2, table);
+        stmt->setString(3, column);
+        std::unique_ptr<sql::ResultSet> res(stmt->executeQuery());
+        return res->next();
+    }
+
+    static bool index_exists(sql::Connection* conn, const std::string& db_name,
+                             const std::string& table, const std::string& index_name) {
+        std::unique_ptr<sql::PreparedStatement> stmt(conn->prepareStatement(
+            "SELECT 1 FROM information_schema.STATISTICS "
+            "WHERE TABLE_SCHEMA = ? AND TABLE_NAME = ? AND INDEX_NAME = ? LIMIT 1"));
+        stmt->setString(1, db_name);
+        stmt->setString(2, table);
+        stmt->setString(3, index_name);
+        std::unique_ptr<sql::ResultSet> res(stmt->executeQuery());
+        return res->next();
+    }
+
+    static void ensure_column_exists(sql::Connection* conn, const std::string& db_name,
+                                     const std::string& table, const std::string& column,
+                                     const std::string& alter_sql) {
+        if (column_exists(conn, db_name, table, column)) {
+            return;
+        }
+        std::unique_ptr<sql::Statement> stmt(conn->createStatement());
+        stmt->execute(alter_sql);
+    }
+
+    static void ensure_index_exists(sql::Connection* conn, const std::string& db_name,
+                                    const std::string& table, const std::string& index_name,
+                                    const std::string& alter_sql) {
+        if (index_exists(conn, db_name, table, index_name)) {
+            return;
+        }
+        std::unique_ptr<sql::Statement> stmt(conn->createStatement());
+        stmt->execute(alter_sql);
+    }
+
     MysqlPool() = default;
 
     ~MysqlPool() {
