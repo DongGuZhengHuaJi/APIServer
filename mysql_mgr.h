@@ -6,6 +6,7 @@
 #include <iostream>
 #include <cstdlib>
 #include "mysql_pool.h"
+#include "redis_mgr.h"
 #include <nlohmann/json.hpp>
 using json = nlohmann::json;
 
@@ -143,7 +144,7 @@ public:
 
         try {
             std::unique_ptr<sql::PreparedStatement> stmt(conn->prepareStatement(
-                "INSERT INTO reservations (user_id, time, room, meeting_type, status) VALUES (?, ?, ?, ?, ?)"));
+                "INSERT INTO meetings (user_id, time, room, meeting_type, status) VALUES (?, ?, ?, ?, ?)"));
             stmt->setString(1, info.from);
             stmt->setString(2, to_mysql_datetime(info.time));
             stmt->setString(3, info.room);
@@ -168,7 +169,7 @@ public:
 
         try {
             std::unique_ptr<sql::PreparedStatement> stmt(conn->prepareStatement(
-                "INSERT INTO reservations (user_id, time, room, meeting_type, status) VALUES (?, ?, ?, ?, ?)"));
+                "INSERT INTO meetings (user_id, time, room, meeting_type, status) VALUES (?, ?, ?, ?, ?)"));
             stmt->setString(1, user_id);
             stmt->setString(2, to_mysql_datetime(start_time));
             stmt->setString(3, room);
@@ -192,7 +193,7 @@ public:
 
         try {
             std::unique_ptr<sql::PreparedStatement> stmt(conn->prepareStatement(
-                "DELETE FROM reservations WHERE user_id = ? AND time = ? AND room = ?"));
+                "DELETE FROM meetings WHERE user_id = ? AND time = ? AND room = ?"));
             stmt->setString(1, info.from);
             stmt->setString(2, to_mysql_datetime(info.time));
             stmt->setString(3, info.room);
@@ -204,7 +205,7 @@ public:
         }
     }
 
-    static bool closeReservationByRoom(const std::string& room, const std::string& reason,
+    static bool closeMeeting(const std::string& room, const std::string& reason,
                                        const std::chrono::system_clock::time_point& closed_time) {
         MysqlPool& pool = MysqlPool::getInstance();
         auto conn = pool.getConnection();
@@ -215,7 +216,7 @@ public:
 
         try {
             std::unique_ptr<sql::PreparedStatement> stmt(conn->prepareStatement(
-                "UPDATE reservations "
+                "UPDATE meetings "
                 "SET status = 'closed', ended_at = ?, end_reason = ? "
                 "WHERE room = ? AND status != 'closed'"));
             stmt->setString(1, to_mysql_datetime(closed_time));
@@ -240,19 +241,26 @@ public:
         try {
             std::unique_ptr<sql::PreparedStatement> stmt(conn->prepareStatement(
                 "SELECT time, room, meeting_type, status, ended_at, end_reason "
-                "FROM reservations WHERE user_id = ? ORDER BY time DESC"));
+                "FROM meetings WHERE user_id = ? ORDER BY time DESC"));
             stmt->setString(1, user_id);
             std::unique_ptr<sql::ResultSet> res(stmt->executeQuery());
 
             reservations = json::array();
-
+            
+            std::vector<std::string> to_update;
             while (res->next()) {
                 const std::string time_str = res->getString("time");
                 const std::string room = res->getString("room");
                 const std::string meeting_type = res->getString("meeting_type");
-                const std::string status = res->getString("status");
+                std::string status = res->getString("status");
                 const std::string ended_at = res->isNull("ended_at") ? "" : res->getString("ended_at");
                 const std::string end_reason = res->isNull("end_reason") ? "" : res->getString("end_reason");
+                
+                if(status == "scheduled" && !ended_at.empty()) {
+                    //如果状态是scheduled但ended_at不为空，说明会议已经结束但状态未更新，修正状态为closed
+                    to_update.push_back(room);
+                    status = "closed";
+                }
 
                 reservations.push_back({
                     {"time", time_str},
@@ -262,6 +270,10 @@ public:
                     {"ended_at", ended_at},
                     {"end_reason", end_reason}
                 });
+            }
+            // 更新状态为 closed 的会议
+            for (const auto& room : to_update) {
+                closeMeeting(room, "auto_closed", std::chrono::system_clock::now());
             }
             return true;
         } catch (sql::SQLException& e) {

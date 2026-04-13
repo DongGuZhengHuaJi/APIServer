@@ -32,7 +32,7 @@ public:
                         "pwd VARCHAR(255), "
                         "created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP)");
 
-            stmt->execute("CREATE TABLE IF NOT EXISTS reservations ("
+            stmt->execute("CREATE TABLE IF NOT EXISTS meetings ("
                         "id BIGINT PRIMARY KEY AUTO_INCREMENT, "
                         "user_id VARCHAR(255) NOT NULL, "
                         "time DATETIME NOT NULL, "
@@ -42,21 +42,21 @@ public:
                         "ended_at DATETIME NULL, "
                         "end_reason VARCHAR(64) NULL, "
                         "created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP, "
-                        "INDEX idx_reservations_user_id (user_id), "
-                        "INDEX idx_reservations_room (room), "
+                        "INDEX idx_meetings_user_id (user_id), "
+                        "INDEX idx_meetings_room (room), "
                         "FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE)");
 
                     // Backward-compatible schema migration for older deployments.
-                    ensure_column_exists(tmp_conn.get(), db_name, "reservations", "meeting_type",
-                             "ALTER TABLE reservations ADD COLUMN meeting_type VARCHAR(32) NOT NULL DEFAULT 'reserved'");
-                    ensure_column_exists(tmp_conn.get(), db_name, "reservations", "status",
-                             "ALTER TABLE reservations ADD COLUMN status VARCHAR(32) NOT NULL DEFAULT 'scheduled'");
-                    ensure_column_exists(tmp_conn.get(), db_name, "reservations", "ended_at",
-                             "ALTER TABLE reservations ADD COLUMN ended_at DATETIME NULL");
-                    ensure_column_exists(tmp_conn.get(), db_name, "reservations", "end_reason",
-                             "ALTER TABLE reservations ADD COLUMN end_reason VARCHAR(64) NULL");
-                    ensure_index_exists(tmp_conn.get(), db_name, "reservations", "idx_reservations_room",
-                            "ALTER TABLE reservations ADD INDEX idx_reservations_room (room)");
+                    ensure_column_exists(tmp_conn.get(), db_name, "meetings", "meeting_type",
+                             "ALTER TABLE meetings ADD COLUMN meeting_type VARCHAR(32) NOT NULL DEFAULT 'reserved'");
+                    ensure_column_exists(tmp_conn.get(), db_name, "meetings", "status",
+                             "ALTER TABLE meetings ADD COLUMN status VARCHAR(32) NOT NULL DEFAULT 'scheduled'");
+                    ensure_column_exists(tmp_conn.get(), db_name, "meetings", "ended_at",
+                             "ALTER TABLE meetings ADD COLUMN ended_at DATETIME NULL");
+                    ensure_column_exists(tmp_conn.get(), db_name, "meetings", "end_reason",
+                             "ALTER TABLE meetings ADD COLUMN end_reason VARCHAR(64) NULL");
+                    ensure_index_exists(tmp_conn.get(), db_name, "meetings", "idx_meetings_room",
+                            "ALTER TABLE meetings ADD INDEX idx_meetings_room (room)");
 
             std::lock_guard<std::mutex> lock(_mutex);
             for (int i = 0; i < size; ++i) {

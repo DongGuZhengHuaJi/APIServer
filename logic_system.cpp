@@ -346,7 +346,7 @@ void LogicSystem::register_post_handler() {
             send_json_response(session, http::status::unauthorized, rsp_json, "application/json");
         }
     });
-    post_handlers.emplace("get_user_reservations", [](const json& data, std::shared_ptr<Session> session) {
+    auto get_user_meetings_handler = [](const json& data, std::shared_ptr<Session> session) {
         std::string user_id = data.value("from", data.value("id", ""));
         if (user_id.empty()) {
             send_json_response(session, http::status::bad_request, 
@@ -367,7 +367,9 @@ void LogicSystem::register_post_handler() {
             rsp_json["error"] = "Failed to fetch reservations";
             send_json_response(session, http::status::internal_server_error, rsp_json, "application/json");
         }
-    });
+    };
+    post_handlers.emplace("get_user_reservations", get_user_meetings_handler);
+    post_handlers.emplace("get_user_meetings", get_user_meetings_handler);
     post_handlers.emplace("reserve", [](const json& data, std::shared_ptr<Session> session) {
         std::cout << "Handling reserve action" << std::endl;
 
@@ -633,8 +635,8 @@ void LogicSystem::startRoomClosedSubscription() {
                     const std::string meeting_type = payload.value("meeting_type", "reserved");
                     const auto closed_time = std::chrono::system_clock::now();
 
-                    if (!MysqlManager::closeReservationByRoom(room_id, reason, closed_time)) {
-                        std::cerr << "Failed to close reservation records for room " << room_id
+                    if (!MysqlManager::closeMeeting(room_id, reason, closed_time)) {
+                        std::cerr << "Failed to close meeting records for room " << room_id
                                   << " type=" << meeting_type << std::endl;
                     }
 
