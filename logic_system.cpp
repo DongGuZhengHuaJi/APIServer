@@ -346,30 +346,31 @@ void LogicSystem::register_post_handler() {
             send_json_response(session, http::status::unauthorized, rsp_json, "application/json");
         }
     });
-    auto get_user_meetings_handler = [](const json& data, std::shared_ptr<Session> session) {
+
+    post_handlers.emplace("get_user_meetings",[](const json& data, std::shared_ptr<Session> session) {
         std::string user_id = data.value("from", data.value("id", ""));
-        if (user_id.empty()) {
-            send_json_response(session, http::status::bad_request, 
-                json{{"error", "Missing user id"}}, "application/json");
-            return;
+            if (user_id.empty()) {
+                send_json_response(session, http::status::bad_request, 
+                    json{{"error", "Missing user id"}}, "application/json");
+                return;
+            }
+            
+            json meetings;
+            if(MysqlManager::getUserMeetings(user_id, meetings)){
+                std::cout << "Fetched meetings for user " << user_id << ": " << meetings.dump() << std::endl;
+                json rsp_json;
+                rsp_json["meetings"] = meetings;
+                send_json_response(session, http::status::ok, rsp_json, "application/json");
+            }
+            else{
+                std::cerr << "Failed to fetch meetings for user: " << user_id << std::endl;
+                json rsp_json;
+                rsp_json["error"] = "Failed to fetch meetings";
+                send_json_response(session, http::status::internal_server_error, rsp_json, "application/json");
+            }
         }
-        
-        json reservations;
-        if(MysqlManager::getUserReservations(user_id, reservations)){
-            std::cout << "Fetched reservations for user " << user_id << ": " << reservations.dump() << std::endl;
-            json rsp_json;
-            rsp_json["reservations"] = reservations;
-            send_json_response(session, http::status::ok, rsp_json, "application/json");
-        }
-        else{
-            std::cerr << "Failed to fetch reservations for user: " << user_id << std::endl;
-            json rsp_json;
-            rsp_json["error"] = "Failed to fetch reservations";
-            send_json_response(session, http::status::internal_server_error, rsp_json, "application/json");
-        }
-    };
-    post_handlers.emplace("get_user_reservations", get_user_meetings_handler);
-    post_handlers.emplace("get_user_meetings", get_user_meetings_handler);
+    );
+
     post_handlers.emplace("reserve", [](const json& data, std::shared_ptr<Session> session) {
         std::cout << "Handling reserve action" << std::endl;
 
@@ -483,6 +484,29 @@ void LogicSystem::register_post_handler() {
         if (!MysqlManager::addQuickMeeting(id, room, now)) {
             json rsp_json;
             rsp_json["error"] = "Failed to persist quick meeting";
+            send_json_response(session, http::status::internal_server_error, rsp_json, "application/json");
+            return;
+        }
+
+        json rsp_json;
+        rsp_json["status"] = "ok";
+        send_json_response(session, http::status::ok, rsp_json, "application/json");
+    });
+
+    post_handlers.emplace("start_screen_share", [](const json& data, std::shared_ptr<Session> session) {
+        std::string id = data.value("from", data.value("id", ""));
+        std::string room = data.value("room", "");
+        if (id.empty() || room.empty()) {
+            json rsp_json;
+            rsp_json["error"] = "Missing from/id or room";
+            send_json_response(session, http::status::bad_request, rsp_json, "application/json");
+            return;
+        }
+
+        const auto now = std::chrono::system_clock::now();
+        if (!MysqlManager::addScreenShareMeeting(id, room, now)) {
+            json rsp_json;
+            rsp_json["error"] = "Failed to persist screen share session";
             send_json_response(session, http::status::internal_server_error, rsp_json, "application/json");
             return;
         }

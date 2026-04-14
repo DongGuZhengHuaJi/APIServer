@@ -6,7 +6,6 @@
 #include <iostream>
 #include <cstdlib>
 #include "mysql_pool.h"
-#include "redis_mgr.h"
 #include <nlohmann/json.hpp>
 using json = nlohmann::json;
 
@@ -183,6 +182,31 @@ public:
         }
     }
 
+    static bool addScreenShareMeeting(const std::string& user_id, const std::string& room,
+                                const std::chrono::system_clock::time_point& start_time) {
+        MysqlPool& pool = MysqlPool::getInstance();
+        auto conn = pool.getConnection();
+        if (!conn) {
+            std::cerr << "Failed to get MySQL connection" << std::endl;
+            return false;
+        }
+
+        try {
+            std::unique_ptr<sql::PreparedStatement> stmt(conn->prepareStatement(
+                "INSERT INTO meetings (user_id, time, room, meeting_type, status) VALUES (?, ?, ?, ?, ?)"));
+            stmt->setString(1, user_id);
+            stmt->setString(2, to_mysql_datetime(start_time));
+            stmt->setString(3, room);
+            stmt->setString(4, "screen_share");
+            stmt->setString(5, "started");
+            stmt->execute();
+            return true;
+        } catch (sql::SQLException& e) {
+            std::cerr << "MySQL Insert ScreenShare Error: " << e.what() << std::endl;
+            return false;
+        }
+    }
+
     static bool removeReservation(const ReserveMeetingInfo& info) {
         MysqlPool& pool = MysqlPool::getInstance();
         auto conn = pool.getConnection();
@@ -230,7 +254,7 @@ public:
         }
     }
 
-    static bool getUserReservations(const std::string& user_id, json &reservations) {
+    static bool getUserMeetings(const std::string& user_id, json &reservations) {
         MysqlPool& pool = MysqlPool::getInstance();
         auto conn = pool.getConnection();
         if (!conn) {
