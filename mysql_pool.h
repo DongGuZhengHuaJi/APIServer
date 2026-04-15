@@ -30,6 +30,7 @@ public:
             stmt->execute("CREATE TABLE IF NOT EXISTS users ("
                         "id VARCHAR(255) PRIMARY KEY, "
                         "pwd VARCHAR(255), "
+                        "self_name VARCHAR(255) NOT NULL DEFAULT '', "
                         "created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP)");
 
             stmt->execute("CREATE TABLE IF NOT EXISTS meetings ("
@@ -57,6 +58,8 @@ public:
                              "ALTER TABLE meetings ADD COLUMN end_reason VARCHAR(64) NULL");
                     ensure_index_exists(tmp_conn.get(), db_name, "meetings", "idx_meetings_room",
                             "ALTER TABLE meetings ADD INDEX idx_meetings_room (room)");
+                        ensure_column_exists(tmp_conn.get(), db_name, "users", "self_name",
+                             "ALTER TABLE users ADD COLUMN self_name VARCHAR(255) NOT NULL DEFAULT ''");
 
             std::lock_guard<std::mutex> lock(_mutex);
             for (int i = 0; i < size; ++i) {

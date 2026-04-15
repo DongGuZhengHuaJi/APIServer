@@ -1,48 +1,4 @@
-# cmake_minimum_required(VERSION 3.10)
-# project(APIServer)
 
-# set(CMAKE_CXX_STANDARD 20)
-# set(CMAKE_CXX_STANDARD_REQUIRED True)
-# set(CMAKE_EXPORT_COMPILE_COMMANDS ON)
-
-# # 1. 查找依赖
-# find_package(PkgConfig REQUIRED)
-
-# pkg_check_modules(HIREDIS REQUIRED hiredis)
-
-# find_package(Boost REQUIRED COMPONENTS system thread)
-# find_package(nlohmann_json REQUIRED)
-# find_package(Threads REQUIRED)
-# find_package(redis++ REQUIRED)
-
-# # 2. 创建目标
-# add_executable(api_server
-#     api_server.cpp
-#     logic_system.cpp
-#     api_server.h
-#     logic_system.h
-#     thread_pool.hpp
-#     redis_mgr.h
-#     mysql_mgr.h
-# )
-
-# # 3. 使用 Target 方式链接（不再需要 include_directories）
-# # 这种写法会自动处理包含路径和依赖关系，不会死循环
-# target_link_libraries(api_server
-#     PRIVATE
-#     Boost::system
-#     Boost::thread
-#     nlohmann_json::nlohmann_json
-#     Threads::Threads
-#     hiredis::hiredis
-#     redis++::redis++
-#     ${HIREDIS_LIBRARIES}
-# )
-
-# target_include_directories(api_server
-#     PRIVATE
-#     ${HIREDIS_INCLUDE_DIRS}
-# )
 
 cmake_minimum_required(VERSION 3.10)
 project(APIServer)

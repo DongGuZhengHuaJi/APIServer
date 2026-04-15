@@ -267,6 +267,7 @@ void LogicSystem::register_post_handler() {
 
         std::string id = data.value("from", data.value("id", ""));
         std::string pwd = data.value("pwd", "");
+        std::string self_name = data.value("self_name", id);
         if (id.empty() || pwd.empty()) {
             std::cerr << "Missing from/id or pwd in register_user action" << std::endl;
             json rsp_json;
@@ -282,7 +283,7 @@ void LogicSystem::register_post_handler() {
             return;
         }
         
-        if(MysqlManager::addUser(id, pwd)){
+        if(MysqlManager::addUser(id, pwd, self_name)){
             std::cout << "User registered successfully: " << id << std::endl;
             json rsp_json;
             rsp_json["message"] = "User registered successfully";
@@ -313,6 +314,7 @@ void LogicSystem::register_post_handler() {
                 std::cout << "User logged in successfully: " << id << std::endl;
                 std::string access_token = LogicSystem::getInstance().generateToken();
                 std::string refresh_token = LogicSystem::getInstance().generateToken();
+                const std::string self_name = MysqlManager::getUserName(id);
 
                 bool access_saved = RedisManager::getInstance().set(access_token_key(access_token), id, kAccessTokenExpireSeconds);
                 bool refresh_saved = RedisManager::getInstance().set(refresh_token_key(refresh_token), id, kRefreshTokenExpireSeconds);
@@ -330,6 +332,7 @@ void LogicSystem::register_post_handler() {
                 rsp_json["access_expires_in"] = kAccessTokenExpireSeconds;
                 rsp_json["refresh_token"] = refresh_token;
                 rsp_json["refresh_expires_in"] = kRefreshTokenExpireSeconds;
+                rsp_json["self_name"] = self_name;
                 send_json_response(session, http::status::ok, rsp_json, "application/json");
             }
             else{
@@ -601,6 +604,34 @@ void LogicSystem::register_post_handler() {
 
         json rsp_json;
         rsp_json["status"] = "ok";
+        send_json_response(session, http::status::ok, rsp_json, "application/json");
+    });
+
+    post_handlers.emplace("update_user_name", [](const json& data, std::shared_ptr<Session> session) {
+        const std::string id = data.value("from", data.value("id", ""));
+        std::string self_name = data.value("self_name", "");
+
+        if (id.empty()) {
+            json rsp_json;
+            rsp_json["error"] = "Missing from (or id)";
+            send_json_response(session, http::status::bad_request, rsp_json, "application/json");
+            return;
+        }
+
+        if (self_name.empty()) {
+            self_name = id;
+        }
+
+        if (!MysqlManager::updateUserName(id, self_name)) {
+            json rsp_json;
+            rsp_json["error"] = "Failed to update self_name";
+            send_json_response(session, http::status::internal_server_error, rsp_json, "application/json");
+            return;
+        }
+
+        json rsp_json;
+        rsp_json["status"] = "ok";
+        rsp_json["self_name"] = MysqlManager::getUserName(id);
         send_json_response(session, http::status::ok, rsp_json, "application/json");
     });
 }

@@ -89,7 +89,7 @@ public:
         }
     }
 
-    static bool addUser(const std::string& id, const std::string& pwd){
+    static bool addUser(const std::string& id, const std::string& pwd, const std::string& self_name = ""){
         //添加用户到mysql
         MysqlPool& pool = MysqlPool::getInstance();
         auto conn = pool.getConnection();
@@ -99,9 +99,10 @@ public:
         }
 
         try {
-            std::unique_ptr<sql::PreparedStatement> stmt(conn->prepareStatement("INSERT INTO users (id, pwd) VALUES (?, ?)"));
+            std::unique_ptr<sql::PreparedStatement> stmt(conn->prepareStatement("INSERT INTO users (id, pwd, self_name) VALUES (?, ?, ?)"));
             stmt->setString(1, id);
             stmt->setString(2, pwd);
+            stmt->setString(3, self_name.empty() ? id : self_name);
             stmt->execute();
             return true;
         } catch (sql::SQLException& e) {
@@ -129,6 +130,51 @@ public:
             return false;
         } catch (sql::SQLException& e) {
             std::cerr << "MySQL Query Error: " << e.what() << std::endl;
+            return false;
+        }
+    }
+
+    static std::string getUserName(const std::string& id) {
+        MysqlPool& pool = MysqlPool::getInstance();
+        auto conn = pool.getConnection();
+        if (!conn) {
+            std::cerr << "Failed to get MySQL connection" << std::endl;
+            return id;
+        }
+
+        try {
+            std::unique_ptr<sql::PreparedStatement> stmt(conn->prepareStatement(
+                "SELECT self_name FROM users WHERE id = ?"));
+            stmt->setString(1, id);
+            std::unique_ptr<sql::ResultSet> res(stmt->executeQuery());
+            if (!res->next()) {
+                return id;
+            }
+
+            const std::string name = res->isNull("self_name") ? "" : res->getString("self_name");
+            return name.empty() ? id : name;
+        } catch (sql::SQLException& e) {
+            std::cerr << "MySQL Query Error: " << e.what() << std::endl;
+            return id;
+        }
+    }
+
+    static bool updateUserName(const std::string& id, const std::string& self_name) {
+        MysqlPool& pool = MysqlPool::getInstance();
+        auto conn = pool.getConnection();
+        if (!conn) {
+            std::cerr << "Failed to get MySQL connection" << std::endl;
+            return false;
+        }
+
+        try {
+            std::unique_ptr<sql::PreparedStatement> stmt(conn->prepareStatement(
+                "UPDATE users SET self_name = ? WHERE id = ?"));
+            stmt->setString(1, self_name.empty() ? id : self_name);
+            stmt->setString(2, id);
+            return stmt->executeUpdate() > 0;
+        } catch (sql::SQLException& e) {
+            std::cerr << "MySQL Update Error: " << e.what() << std::endl;
             return false;
         }
     }
