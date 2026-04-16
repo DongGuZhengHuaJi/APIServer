@@ -134,6 +134,26 @@ public:
         }
     }
 
+    static bool updatePassword(const std::string& id, const std::string& new_pwd) {
+        //更新用户密码
+        MysqlPool& pool = MysqlPool::getInstance();
+        auto conn = pool.getConnection();
+        if (!conn) {
+            std::cerr << "Failed to get MySQL connection" << std::endl;
+            return false;
+        }
+
+        try {
+            std::unique_ptr<sql::PreparedStatement> stmt(conn->prepareStatement("UPDATE users SET pwd = ? WHERE id = ?"));
+            stmt->setString(1, new_pwd);
+            stmt->setString(2, id);
+            return stmt->executeUpdate() > 0;
+        } catch (sql::SQLException& e) {
+            std::cerr << "MySQL Update Error: " << e.what() << std::endl;
+            return false;
+        }
+    }
+
     static std::string getUserName(const std::string& id) {
         MysqlPool& pool = MysqlPool::getInstance();
         auto conn = pool.getConnection();

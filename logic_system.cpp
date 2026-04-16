@@ -225,7 +225,7 @@ void LogicSystem::handle_post_request(const http::request<http::string_body>& re
                 send_json_response(session, http::status::unauthorized, rsp_json, "application/json");
                 return;
             }
-        } else if(action != "register_user" && action != "login" && action != "logout") {
+        } else if(action != "register_user" && action != "login" && action!= "reset_password" && action != "logout") {
             bool token_valid = checkAccessToken(requester_id, root.value("access_token", ""));
             if (!token_valid) {
                 json rsp_json;
@@ -350,6 +350,37 @@ void LogicSystem::register_post_handler() {
         }
     });
 
+    post_handlers.emplace("reset_password", [](const json& data, std::shared_ptr<Session> session) {
+        std::string id = data.value("from", data.value("id", ""));
+        std::string new_pwd = data.value("new_password", "");
+        if (id.empty() || new_pwd.empty()) {
+            json rsp_json;
+            rsp_json["error"] = "Missing from/id or new_password";
+            send_json_response(session, http::status::bad_request, rsp_json, "application/json");
+            return;
+        }
+        if (!MysqlManager::checkUserExists(id)) {
+            json rsp_json;
+            rsp_json["error"] = "User does not exist";
+            send_json_response(session, http::status::bad_request, rsp_json, "application/json");
+            return;
+        }
+        if (MysqlManager::checkPwd(id, new_pwd)) {
+            json rsp_json;
+            rsp_json["error"] = "New password cannot be the same as the old password";
+            send_json_response(session, http::status::unauthorized, rsp_json, "application/json");
+            return;
+        }
+        if (MysqlManager::updatePassword(id, new_pwd)) {
+            json rsp_json;
+            rsp_json["status"] = "ok";
+            send_json_response(session, http::status::ok, rsp_json, "application/json");
+        } else {
+            json rsp_json;
+            rsp_json["error"] = "Failed to update password";
+            send_json_response(session, http::status::internal_server_error, rsp_json, "application/json");
+        }
+    });
     post_handlers.emplace("get_user_meetings",[](const json& data, std::shared_ptr<Session> session) {
         std::string user_id = data.value("from", data.value("id", ""));
             if (user_id.empty()) {
